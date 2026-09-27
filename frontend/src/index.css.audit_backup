@@ -1,0 +1,15 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-blue: #0F326D;
+  --color-brand-lightblue: #3182CE;
+  --color-brand-green: #38A169;
+  --color-brand-purple: #805AD5;
+  --color-brand-orange: #DD6B20;
+  --color-brand-bg: #F4F7FB;
+}
+
+body {
+  background-color: var(--color-brand-bg);
+  color: #1e293b; /* slate-800 */
+}

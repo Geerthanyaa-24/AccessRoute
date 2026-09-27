@@ -1,0 +1,18 @@
+[
+  {
+    "id": "c89d656c411da01e",
+    "name": "AccessRoute Maintainer",
+    "email": "maintainer@accessroute.local",
+    "role": "maintainer",
+    "password_hash": "1941795df843cdfd2c9637726327791a3c1e8191537b3c8ea9c828657cc5ee7d",
+    "salt": "64e0a314cd8af55499d58c06a2018b15"
+  },
+  {
+    "id": "c27b2bac40679648",
+    "name": "AccessRoute User",
+    "email": "user@accessroute.local",
+    "role": "user",
+    "password_hash": "0e768ecd65c9adc8809269103cc05541afd9e2d2c507a2ebc65c2555aaa257a2",
+    "salt": "ceb218c0212659e4ee2d3beb20496c8e"
+  }
+]
