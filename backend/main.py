@@ -35,6 +35,8 @@ DATA_PATH = BASE_DIR / "accessibility_routing_data.csv"
 
 app = FastAPI(title="AccessRoute Accessibility Navigation API", version="2.0.0")
 app.include_router(travel_router)
+from api.travel import create_travel_plan
+app.add_api_route('/api/ai-travel-plan', create_travel_plan, methods=['POST'], tags=['ai-travel-plan'])
 app.include_router(travel_router, prefix="/api", tags=["ai-travel-plan"])
 app.add_middleware(
     CORSMiddleware,

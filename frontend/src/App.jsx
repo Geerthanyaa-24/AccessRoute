@@ -2523,7 +2523,7 @@ function TravelPlannerPage({ profile }) {
     e.preventDefault();
     setLoading(true); setError(null);
     try {
-      const res = await fetch(`${API}/api/ai-travel-plan`, {
+      const res = await fetch(`${API}/api/travel/plan`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           origin: formData.origin, destination: formData.destination,
@@ -2595,7 +2595,7 @@ function TravelPlannerPage({ profile }) {
                 </h2>
                 <p className="text-sm text-gray-500 mt-1 font-medium">A 1-day accessible trip from {plan.trip_overview.origin} to {plan.trip_overview.destination}</p>
               </div>
-              <button className="flex items-center gap-2 px-4 py-2 bg-gray-50 hover:bg-gray-100 text-gray-700 text-sm font-semibold rounded-lg border transition-colors shadow-sm whitespace-nowrap">
+              <button onClick={() => window.print()} className="flex items-center gap-2 px-4 py-2 bg-gray-50 hover:bg-gray-100 text-gray-700 text-sm font-semibold rounded-lg border transition-colors shadow-sm whitespace-nowrap">
                 <FileText size={16}/> Print / Save
               </button>
             </div>
@@ -2620,7 +2620,7 @@ function TravelPlannerPage({ profile }) {
 
             {/* Itinerary Timeline */}
             {activeTab === 'Itinerary' && (
-              <div className="p-6 md:p-8">
+              <div className="p-6 pl-24 md:p-8 md:pl-28">
                 <div className="relative border-l-2 border-gray-100 ml-4 md:ml-6 space-y-10 pb-4">
                   {plan.itinerary[0]?.steps.map((step, idx) => (
                     <div key={idx} className="relative pl-8 md:pl-12">
@@ -2740,21 +2740,21 @@ function TravelPlannerPage({ profile }) {
               <div className="space-y-3">
                 <div className="flex justify-between items-center text-sm border-b border-gray-50 pb-3">
                   <span className="flex items-center gap-2 text-gray-600"><Navigation size={14} className="text-blue-500"/> Total Distance</span>
-                  <span className="font-bold text-gray-800">58 km</span>
+                  <span className="font-bold text-gray-800">{plan.trip_overview?.distance_km || 0} km</span>
                 </div>
                 <div className="flex justify-between items-center text-sm border-b border-gray-50 pb-3">
                   <span className="flex items-center gap-2 text-gray-600"><Clock size={14} className="text-blue-500"/> Estimated Travel Time</span>
-                  <span className="font-bold text-gray-800">1 hr 15 min</span>
+                  <span className="font-bold text-gray-800">{plan.trip_overview?.travel_time_min ? `${Math.floor(plan.trip_overview.travel_time_min / 60)}h ${plan.trip_overview.travel_time_min % 60}m` : '0 min'}</span>
                 </div>
                 <div className="flex justify-between items-center text-sm border-b border-gray-50 pb-3">
                   <span className="flex items-center gap-2 text-gray-600"><Sun size={14} className="text-blue-500"/> Best Time to Visit</span>
-                  <span className="font-bold text-gray-800">Nov – Feb</span>
+                  <span className="font-bold text-gray-800">Anytime</span>
                 </div>
                 <div className="flex justify-between items-center text-sm pt-1">
                   <span className="flex items-center gap-2 text-gray-600"><Activity size={14} className="text-blue-500"/> Accessibility Score</span>
                   <div className="flex items-center gap-2">
-                    <div className="w-6 h-6 rounded-full border-2 border-blue-600 border-r-gray-200 flex items-center justify-center text-[8px] font-bold text-blue-600">85</div>
-                    <span className="font-bold text-gray-800">8.5 <span className="text-gray-400 font-normal text-xs">/10</span></span>
+                    <div className="w-6 h-6 rounded-full border-2 border-blue-600 border-r-gray-200 flex items-center justify-center text-[8px] font-bold text-blue-600">{plan.trip_overview?.overall_accessibility_score || 0}</div>
+                    <span className="font-bold text-gray-800">{(plan.trip_overview?.overall_accessibility_score / 10).toFixed(1) || 0} <span className="text-gray-400 font-normal text-xs">/10</span></span>
                   </div>
                 </div>
               </div>
