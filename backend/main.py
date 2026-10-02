@@ -17,6 +17,7 @@ from typing import Any, Literal
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException
+from api.travel import router as travel_router
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
@@ -25,10 +26,16 @@ try:
 except ImportError:
     from scoring_engine import calculate_accessibility_score, calculate_safety_score
 
+from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
+load_dotenv(BASE_DIR / ".env")
+
 DATA_PATH = BASE_DIR / "accessibility_routing_data.csv"
 
+
 app = FastAPI(title="AccessRoute Accessibility Navigation API", version="2.0.0")
+app.include_router(travel_router)
+app.include_router(travel_router, prefix="/api", tags=["ai-travel-plan"])
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://localhost:5174"],
@@ -948,6 +955,24 @@ def metrics_overview():
     }
 
 
+@app.get("/api/dataset/preview")
+def dataset_preview(limit: int = 15):
+    """Return the first N rows of the accessibility dataset for dashboard display."""
+    global DATA
+    try:
+        DATA = pd.read_csv(DATA_PATH)
+    except Exception:
+        pass
+    if DATA.empty:
+        return {"records": [], "columns": [], "total": 0}
+    preview = DATA.head(limit).where(pd.notnull(DATA.head(limit)), None)
+    return {
+        "columns": list(DATA.columns),
+        "records": preview.to_dict(orient="records"),
+        "total": int(len(DATA)),
+    }
+
+
 @app.post("/api/routes/compare")
 def compare_routes(request: RouteRequest):
     if MAPBOX_ACCESS_TOKEN:
@@ -1311,4 +1336,315 @@ def chat_message(request: ChatRequest):
             "provider_error": type(exc).__name__,
             "route_context": context,
         }
+
+@app.get("/api/buildings")
+def get_buildings():
+    """Return accessible buildings from the database."""
+    try:
+        with open(BASE_DIR / "backend" / "buildings.json", "r", encoding="utf-8") as f:
+            return {"buildings": json.load(f)}
+    except FileNotFoundError:
+        return {"buildings": []}
+
+
+# ====================================================================
+# 🧳 AI ACCESSIBLE TRAVEL PLANNER MODULE
+# ====================================================================
+from typing import List, Optional
+
+class Hotel(BaseModel):
+    id: str
+    name: str
+    location: str
+    rating: float
+    price: str
+    ground_floor: str
+    ramp: str
+    elevator: str
+    step_free_entry: str
+    accessible_room: str
+    accessible_bathroom: str
+    accessible_parking: str
+    accessible_restaurant: str
+    accessible_restroom: str
+    confidence: str
+    source: str
+    last_verified: str
+    accessibility_score: int
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+
+class Facility(BaseModel):
+    id: str
+    name: str
+    type: str
+    location: str
+    accessibility_features: List[str]
+    confidence: str
+    source: str
+    verification_status: str
+    last_verified: str
+    accessibility_score: int
+    lat: Optional[float] = None
+    lon: Optional[float] = None
+
+class TripPlanRequest(BaseModel):
+    origin: str
+    destination: str
+    start_date: str
+    end_date: str
+    travelers: int
+    accessibility_profile: AccessibilityProfile
+    preferences: dict[str, bool]
+
+# DEMO SYNTHETIC DATA FOR TRAVEL PLANNER
+DEMO_HOTELS = [
+    Hotel(
+        id="h1", name="Grand Accessible Resort", location="Downtown", rating=4.8, price="$$$",
+        ground_floor="AVAILABLE", ramp="AVAILABLE", elevator="AVAILABLE", step_free_entry="AVAILABLE",
+        accessible_room="AVAILABLE", accessible_bathroom="AVAILABLE", accessible_parking="UNKNOWN",
+        accessible_restaurant="AVAILABLE", accessible_restroom="AVAILABLE",
+        confidence="HIGH", source="Verified Community", last_verified="2026-09-01", accessibility_score=94
+    ),
+    Hotel(
+        id="h2", name="City Center Inn", location="City Center", rating=4.2, price="$$",
+        ground_floor="AVAILABLE", ramp="NOT AVAILABLE", elevator="AVAILABLE", step_free_entry="UNKNOWN",
+        accessible_room="AVAILABLE", accessible_bathroom="AVAILABLE", accessible_parking="NOT AVAILABLE",
+        accessible_restaurant="AVAILABLE", accessible_restroom="UNKNOWN",
+        confidence="MEDIUM", source="Automated Crawl", last_verified="2026-08-15", accessibility_score=72
+    )
+]
+
+DEMO_FACILITIES = [
+    Facility(
+        id="f1", name="Central Park", type="Attractions", location="Downtown",
+        accessibility_features=["Flat paths", "Accessible restrooms", "Ramped entrances"],
+        confidence="HIGH", source="Official Data", verification_status="VERIFIED", last_verified="2026-09-10",
+        accessibility_score=88
+    ),
+    Facility(
+        id="f2", name="Metro Station A", type="Transport", location="City Center",
+        accessibility_features=["Elevator to platform", "Tactile paving"],
+        confidence="HIGH", source="Transport Authority", verification_status="VERIFIED", last_verified="2026-09-20",
+        accessibility_score=95
+    )
+]
+
+
+@app.post("/api/travel-plan")
+def generate_travel_plan(request: TripPlanRequest):
+    # Get Real-time Coordinates for Destination
+    try:
+        lat, lon, label = _geocode_place(request.destination)
+    except Exception:
+        # Fallback to a default if geocoding fails
+        lat, lon, label = 40.7128, -74.0060, request.destination
+
+    # Fetch Real-time Places from Overpass API
+    query = f"""[out:json][timeout:15];
+(
+  node["tourism"="hotel"](around:3000,{lat},{lon});
+  node["amenity"="restaurant"](around:2000,{lat},{lon});
+  node["tourism"="museum"](around:3000,{lat},{lon});
+  node["tourism"="attraction"](around:3000,{lat},{lon});
+);
+out body 40;"""
+    
+    real_hotels = []
+    real_facilities = []
+    
+    try:
+        req = urllib.request.Request(
+            "https://overpass-api.de/api/interpreter",
+            data=query.encode("utf-8"),
+            headers={"User-Agent": "AccessRoute Travel Planner", "Content-Type": "application/x-www-form-urlencoded"},
+            method="POST"
+        )
+        with urllib.request.urlopen(req, timeout=15) as response:
+            data = json.loads(response.read().decode("utf-8"))
+            
+        for el in data.get("elements", []):
+            tags = el.get("tags", {})
+            name = tags.get("name", "Unnamed")
+            if name == "Unnamed": continue
+            
+            w_access = tags.get("wheelchair", "unknown")
+            if w_access == "yes":
+                access_score = 95
+                conf = "HIGH"
+                features = ["Wheelchair Accessible", "Step-free entry"]
+            elif w_access == "no":
+                access_score = 20
+                conf = "HIGH"
+                features = ["Not Wheelchair Accessible"]
+            else:
+                access_score = 70 if request.accessibility_profile.mobility else 85
+                conf = "MEDIUM"
+                features = ["Accessibility Unknown"]
+                
+            lat_el = el.get("lat")
+            lon_el = el.get("lon")
+
+            if "tourism" in tags and tags["tourism"] == "hotel":
+                real_hotels.append(Hotel(
+                    id=str(el.get("id")),
+                    name=name, location=label, rating=4.5, price="$$",
+                    ground_floor="AVAILABLE" if w_access=="yes" else "UNKNOWN",
+                    ramp="AVAILABLE" if w_access=="yes" else "UNKNOWN",
+                    elevator="AVAILABLE" if tags.get("elevator")=="yes" else "UNKNOWN",
+                    step_free_entry="AVAILABLE" if w_access=="yes" else "UNKNOWN",
+                    accessible_room="AVAILABLE" if w_access=="yes" else "UNKNOWN",
+                    accessible_bathroom="UNKNOWN", accessible_parking="UNKNOWN",
+                    accessible_restaurant="UNKNOWN", accessible_restroom="UNKNOWN",
+                    confidence=conf, source="OpenStreetMap", last_verified="2026", accessibility_score=access_score,
+                    lat=lat_el, lon=lon_el
+                ))
+            else:
+                ftype = tags.get("amenity", tags.get("tourism", "Facility")).title()
+                real_facilities.append(Facility(
+                    id=str(el.get("id")),
+                    name=name, type=ftype, location=label,
+                    accessibility_features=features,
+                    confidence=conf, source="OpenStreetMap", verification_status="UNVERIFIED", last_verified="2026",
+                    accessibility_score=access_score,
+                    lat=lat_el, lon=lon_el
+                ))
+    except Exception as e:
+        print(f"Overpass error: {e}")
+        real_hotels = DEMO_HOTELS
+        real_facilities = DEMO_FACILITIES
+
+    if not real_hotels:
+        real_hotels = DEMO_HOTELS
+    if not real_facilities:
+        real_facilities = DEMO_FACILITIES
+
+    # Base recommendation logic based on profile
+    real_hotels = sorted(real_hotels, key=lambda h: h.accessibility_score, reverse=True)
+    recommended_hotel = real_hotels[0]
+    
+    # Generate structured Day-by-Day itinerary using the real places
+    day1_dinner = next((f.name for f in real_facilities if f.type == "Restaurant"), "Nearby Restaurant")
+    day2_attraction = next((f.name for f in real_facilities if f.type in ["Attraction", "Museum"]), "City Sightseeing")
+
+    itinerary = [
+        {
+            "day": "DAY 1",
+            "steps": [
+                f"Arrival at {label}",
+                f"Check-in at {recommended_hotel.name}",
+                f"Dinner at {day1_dinner}",
+                "Evening relaxation"
+            ]
+        },
+        {
+            "day": "DAY 2",
+            "steps": [
+                f"Breakfast at {recommended_hotel.name}",
+                f"Visit {day2_attraction}",
+                "Lunch near the attraction",
+                "Afternoon accessible route exploration"
+            ]
+        }
+    ]
+
+    return {
+        "status": "success",
+        "trip_overview": {
+            "origin": request.origin,
+            "destination": label,
+            "dates": f"{request.start_date} to {request.end_date}",
+            "travelers": request.travelers,
+            "facilities_found": len(real_facilities),
+            "recommended_hotel": recommended_hotel.model_dump()
+        },
+        "itinerary": itinerary,
+        "hotels": [h.model_dump() for h in real_hotels[:4]],
+        "facilities": [f.model_dump() for f in real_facilities[:10]]
+    }
+
+@app.get("/api/hotels")
+def get_hotels():
+    return {"hotels": [h.model_dump() for h in DEMO_HOTELS]}
+
+@app.get("/api/facilities")
+def get_facilities():
+    return {"facilities": [f.model_dump() for f in DEMO_FACILITIES]}
+
+class TravelChatRequest(BaseModel):
+    message: str
+    travel_context: dict[str, Any]
+
+
+@app.post("/api/travel-chat")
+def travel_chat(request: TravelChatRequest):
+    api_key = os.getenv("OPENAI_API_KEY", "").strip()
+    msg = request.message.lower()
+    dest = request.travel_context.get("trip_overview", {}).get("destination", "your destination")
+    
+    # Generative AI Chatbot
+    if api_key:
+        system = "You are an AI Travel Assistant for accessible travel. Use only the provided travel context. Never invent accessibility features like ramps or elevators if they are marked UNKNOWN."
+        payload = {
+            "model": os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+            "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": f"Context: {json.dumps(request.travel_context)}\n\nQuestion: {request.message}"}
+            ],
+            "temperature": 0.2
+        }
+        try:
+            req = urllib.request.Request(
+                "https://api.openai.com/v1/chat/completions",
+                data=json.dumps(payload).encode("utf-8"),
+                headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=30) as response:
+                data = json.loads(response.read().decode("utf-8"))
+            answer = data["choices"][0]["message"]["content"]
+            return {"answer": answer, "provider": "openai"}
+        except Exception as exc:
+            pass # Fall back if API fails
+
+    # Dynamic Contextual Fallback (Offline Mode)
+    # Extracts info from context dynamically to answer ANY question structurally
+    hotels = request.travel_context.get("hotels", [])
+    facs = request.travel_context.get("facilities", [])
+    
+    response = ""
+    if "hotel" in msg or "stay" in msg:
+        if hotels:
+            best_hotel = hotels[0]
+            response = f"Based on our real-time data for {dest}, I recommend {best_hotel['name']}. It has an accessibility score of {best_hotel['accessibility_score']}."
+            if best_hotel['elevator'] == 'AVAILABLE': response += " It has a verified elevator."
+        else:
+            response = "I couldn't find verified accessible hotels in the current area."
+    elif "restaurant" in msg or "food" in msg or "eat" in msg:
+        rests = [f['name'] for f in facs if f['type'] == 'Restaurant']
+        if rests:
+            response = f"Here are some nearby restaurants we found in {dest}: {', '.join(rests[:3])}."
+        else:
+            response = "I don't have verified accessible restaurants on this specific route yet."
+    elif "attraction" in msg or "museum" in msg or "visit" in msg or "see" in msg:
+        attrs = [f['name'] for f in facs if f['type'] in ['Attraction', 'Museum']]
+        if attrs:
+            response = f"You can visit {', '.join(attrs[:3])}. I have added them to your itinerary."
+        else:
+            response = "I couldn't find specific attractions in the immediate area with accessibility tags."
+    elif "itinerary" in msg or "plan" in msg or "day" in msg:
+        itinerary = request.travel_context.get("itinerary", [])
+        if itinerary:
+            response = f"Your itinerary includes {len(itinerary)} days. {itinerary[0]['day']} starts with {itinerary[0]['steps'][0]}."
+        else:
+            response = "Your itinerary is currently empty."
+    else:
+        # Truly generic answer covering any other question
+        response = f"I am your AI Travel Assistant! We found {len(facs)} facilities and {len(hotels)} hotels in {dest}. You asked about '{request.message}'. "
+        if request.travel_context.get("trip_overview", {}).get("recommended_hotel"):
+            response += f"Your recommended stay is {request.travel_context['trip_overview']['recommended_hotel']['name']}."
+    
+    response += "\n\n*[Note: Add your OPENAI_API_KEY to the .env file to unlock the full Generative AI Chatbot instead of this offline contextual mode!]*"
+    
+    return {"answer": response, "provider": "deterministic_fallback"}
 

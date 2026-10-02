@@ -1,6 +1,7 @@
 import React, {
   createContext, useCallback, useContext, useEffect, useMemo, useRef, useState,
 } from 'react';
+import { createPortal } from 'react-dom';
 import {
   BrowserRouter as Router, Routes, Route, Link, useLocation, useNavigate,
 } from 'react-router-dom';
@@ -72,6 +73,8 @@ function loadSavedPlaces() {
 // ─── Navigation groups ────────────────────────────────────────────────────────
 const navGroups = [
   { label: 'Explore', items: [
+    ['/travel-planner', '🧳 AI Travel Planner', Sparkles],
+
     ['/', 'Dashboard', Home],
     ['/find-route', 'Find Accessible Route', Search],
     ['/nearby-places', 'Nearby Places', MapPin],
@@ -137,12 +140,75 @@ function AccessRouteMapTiles() {
 }
 
 // ─── Location search field ────────────────────────────────────────────────────
+
+function SuggestionsPortal({ inputRef, suggestions, onSelect, open }) {
+  const [rect, setRect] = useState(null);
+
+  useEffect(() => {
+    if (!open || !inputRef.current) { setRect(null); return; }
+    function update() {
+      const r = inputRef.current?.getBoundingClientRect();
+      if (r) setRect({ top: r.bottom, left: r.left, width: r.width });
+    }
+    update();
+    window.addEventListener('scroll', update, true);
+    window.addEventListener('resize', update);
+    return () => {
+      window.removeEventListener('scroll', update, true);
+      window.removeEventListener('resize', update);
+    };
+  }, [open, inputRef]);
+
+  if (!open || !rect || suggestions.length === 0) return null;
+
+  return createPortal(
+    <div
+      style={{
+        position: 'fixed',
+        top: rect.top + 4,
+        left: rect.left,
+        width: rect.width,
+        zIndex: 99999,
+        maxHeight: 288,
+        overflowY: 'auto',
+        borderRadius: 14,
+        border: '1px solid var(--line, #e0d8f5)',
+        background: 'var(--surface, #fff)',
+        boxShadow: '0 16px 48px rgba(0,0,0,.18)',
+      }}
+    >
+      {suggestions.map((s, i) => (
+        <button
+          key={`${s.latitude},${s.longitude}`}
+          type="button"
+          onMouseDown={e => { e.preventDefault(); onSelect(s); }}
+          style={{
+            display: 'flex', width: '100%', alignItems: 'center', gap: 8,
+            padding: '10px 14px', textAlign: 'left', fontSize: 13,
+            color: 'var(--text-main, #1a1428)',
+            background: 'none', border: 'none',
+            borderBottom: i < suggestions.length - 1 ? '1px solid var(--line, #e0d8f5)' : 'none',
+            cursor: 'pointer',
+          }}
+          onMouseEnter={e => { e.currentTarget.style.background = 'var(--surface-muted, #f5f2fd)'; }}
+          onMouseLeave={e => { e.currentTarget.style.background = 'none'; }}
+        >
+          <MapPin size={13} style={{ color: 'var(--accent, #7c3aed)', flexShrink: 0 }} />
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>{s.label}</span>
+        </button>
+      ))}
+    </div>,
+    document.body
+  );
+}
+
 function LocationSearchField({ value, onChange, onSelect, placeholder, required = false }) {
   const [suggestions, setSuggestions] = useState([]);
   const [searching, setSearching] = useState(false);
   const [inputText, setInputText] = useState(value || '');
   const [open, setOpen] = useState(false);
-  const dropdownRef = useRef(null);
+  const wrapperRef = useRef(null);
+  const inputRef = useRef(null);
   const timerRef = useRef(null);
   const skipNextSearch = useRef(false);
 
@@ -150,7 +216,6 @@ function LocationSearchField({ value, onChange, onSelect, placeholder, required 
   useEffect(() => {
     const isCoord = /^-?\d+(\.\d+)?\s*,\s*-?\d+(\.\d+)?$/.test(value || '');
     if (isCoord) {
-      // Try to show a friendly name for coordinates
       const [lat, lon] = value.split(',').map(s => s.trim());
       fetch(`${API}/api/locations/reverse?lat=${lat}&lon=${lon}`)
         .then(r => r.json()).then(d => { if (d.label) setInputText(d.label); })
@@ -163,7 +228,7 @@ function LocationSearchField({ value, onChange, onSelect, placeholder, required 
   // Close dropdown on outside click
   useEffect(() => {
     const handler = e => {
-      if (dropdownRef.current && !dropdownRef.current.contains(e.target)) setOpen(false);
+      if (wrapperRef.current && !wrapperRef.current.contains(e.target)) setOpen(false);
     };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
@@ -172,7 +237,7 @@ function LocationSearchField({ value, onChange, onSelect, placeholder, required 
   function handleInput(e) {
     const text = e.target.value;
     setInputText(text);
-    onChange(text); // pass raw text to parent (for display); will be overridden by coords on selection
+    onChange(text);
     setSuggestions([]);
     setOpen(false);
     if (skipNextSearch.current) { skipNextSearch.current = false; return; }
@@ -188,7 +253,7 @@ function LocationSearchField({ value, onChange, onSelect, placeholder, required 
         setOpen(results.length > 0);
       } catch { setSuggestions([]); setOpen(false); }
       finally { setSearching(false); }
-    }, 500);
+    }, 400);
   }
 
   function selectSuggestion(s) {
@@ -197,42 +262,30 @@ function LocationSearchField({ value, onChange, onSelect, placeholder, required 
     setInputText(s.label);
     setSuggestions([]);
     setOpen(false);
-    onChange(coords);   // pass coords to parent
+    onChange(coords);
     onSelect?.(s);
   }
 
   return (
-    <div className="relative" ref={dropdownRef}>
+    <div className="relative" ref={wrapperRef}>
       <input
+        ref={inputRef}
         className="field"
         value={inputText}
         placeholder={placeholder}
         required={required}
         autoComplete="off"
         onChange={handleInput}
+        onFocus={() => { if (suggestions.length > 0) setOpen(true); }}
       />
       {searching && (
         <div className="absolute right-3 top-1/2 -translate-y-1/2 flex gap-0.5 pointer-events-none">
-          <span className="loading-dot h-1.5 w-1.5 rounded-full bg-blue-500" />
-          <span className="loading-dot h-1.5 w-1.5 rounded-full bg-blue-500" />
-          <span className="loading-dot h-1.5 w-1.5 rounded-full bg-blue-500" />
+          <span className="loading-dot h-1.5 w-1.5 rounded-full" style={{ background: 'var(--accent)' }} />
+          <span className="loading-dot h-1.5 w-1.5 rounded-full" style={{ background: 'var(--accent)' }} />
+          <span className="loading-dot h-1.5 w-1.5 rounded-full" style={{ background: 'var(--accent)' }} />
         </div>
       )}
-      {open && suggestions.length > 0 && (
-        <div className="location-suggestions absolute inset-x-0 top-full z-50 mt-1 max-h-64 overflow-y-auto rounded-xl border shadow-xl">
-          {suggestions.map(s => (
-            <button
-              key={`${s.latitude},${s.longitude}`}
-              type="button"
-              className="location-suggestion flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm"
-              onMouseDown={e => { e.preventDefault(); selectSuggestion(s); }}
-            >
-              <MapPin size={13} className="shrink-0 text-blue-500" />
-              <span className="truncate">{s.label}</span>
-            </button>
-          ))}
-        </div>
-      )}
+      <SuggestionsPortal inputRef={inputRef} suggestions={suggestions} onSelect={selectSuggestion} open={open} />
     </div>
   );
 }
@@ -590,33 +643,33 @@ function LoginPage({ onAuthenticated }) {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-[#e8f0ff] via-white to-[#e0f7ef] p-4">
+    <div className="flex min-h-screen items-center justify-center p-4" style={{ background: 'linear-gradient(135deg, #f3f0fa 0%, #ede9fb 50%, #e8f5f0 100%)' }}>
       <div className="grid w-full max-w-5xl overflow-hidden rounded-[2rem] bg-white shadow-2xl lg:grid-cols-2">
         {/* Left panel */}
-        <div className="hidden bg-[#173b76] p-10 text-white lg:flex lg:flex-col lg:justify-between">
+        <div className="hidden p-10 text-white lg:flex lg:flex-col lg:justify-between" style={{ background: 'linear-gradient(160deg, #5b21b6 0%, #7c3aed 60%, #6d28d9 100%)' }}>
           <div>
             <div className="mb-8 flex items-center gap-3">
-              <div className="rounded-full bg-white p-3 text-[#173b76]"><Navigation size={26} /></div>
+              <div className="rounded-full bg-white/20 p-3"><Navigation size={26} /></div>
               <span className="text-2xl font-black">AccessRoute</span>
             </div>
             <h1 className="text-4xl font-black leading-tight">Accessible navigation for everyone.</h1>
-            <p className="mt-5 text-blue-100 leading-7">Personalized routes, accessibility insights, community reports, and safer mobility decisions — all in one place.</p>
+            <p className="mt-5 leading-7" style={{ color: 'rgba(255,255,255,0.8)' }}>Personalized routes, accessibility insights, community reports, and safer mobility decisions — all in one place.</p>
             <div className="mt-8 space-y-3">
               {['♿ Optimized accessible routes', '🗺️ Real-time mapping & alternatives', '🏢 Building accessibility database', '🤖 AI route assistant'].map(f => (
-                <div key={f} className="flex items-center gap-3 text-sm text-blue-100"><CheckCircle2 size={16} className="text-emerald-400 shrink-0" />{f}</div>
+                <div key={f} className="flex items-center gap-3 text-sm" style={{ color: 'rgba(255,255,255,0.85)' }}><CheckCircle2 size={16} className="text-emerald-300 shrink-0" />{f}</div>
               ))}
             </div>
           </div>
-          <div className="rounded-2xl border border-white/15 bg-white/10 p-4 text-sm text-blue-100">Secure role-based entry for users and maintainers.</div>
+          <div className="rounded-2xl border p-4 text-sm" style={{ borderColor: 'rgba(255,255,255,0.2)', background: 'rgba(255,255,255,0.1)', color: 'rgba(255,255,255,0.8)' }}>Secure role-based entry for users and maintainers.</div>
         </div>
         {/* Right panel */}
         <form onSubmit={submit} className="p-6 sm:p-10 flex flex-col justify-center">
-          <div className="mb-6 lg:hidden flex items-center gap-2 text-xl font-black text-[#173b76]"><Navigation />AccessRoute</div>
+          <div className="mb-6 lg:hidden flex items-center gap-2 text-xl font-black" style={{ color: '#5b21b6' }}><Navigation />AccessRoute</div>
           <h2 className="text-3xl font-black text-slate-800">{mode === 'login' ? 'Welcome back!' : 'Create account'}</h2>
           <p className="mt-2 mb-6 text-sm text-slate-500">Choose your account type to continue.</p>
           <div className="mb-5 grid grid-cols-2 gap-2 rounded-2xl bg-slate-100 p-1">
             {['user', 'maintainer'].map(r => (
-              <button key={r} type="button" onClick={() => setRole(r)} className={`rounded-xl px-3 py-3 text-sm font-bold capitalize transition ${role === r ? 'bg-white text-[#173b76] shadow' : 'text-slate-500'}`}>{r}</button>
+              <button key={r} type="button" onClick={() => setRole(r)} className={`rounded-xl px-3 py-3 text-sm font-bold capitalize transition ${role === r ? 'bg-white shadow' : 'text-slate-500'}`} style={role === r ? { color: '#5b21b6' } : {}}>{r}</button>
             ))}
           </div>
           {mode === 'register' && (
@@ -626,7 +679,7 @@ function LoginPage({ onAuthenticated }) {
           <label className="mb-5 block text-sm font-bold text-slate-600">Password<input className="field mt-2" type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={8} /></label>
           {error && <div className={`mb-4 rounded-xl p-3 text-sm ${error.includes('created') ? 'bg-emerald-50 text-emerald-700' : 'bg-red-50 text-red-700'}`}>{error}</div>}
           <button disabled={busy} className="primary-button w-full mb-3">{busy ? 'Please wait…' : mode === 'login' ? 'Sign in to AccessRoute' : 'Create my account'}</button>
-          <button type="button" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); }} className="w-full text-sm font-bold text-[#2f80ed]">
+          <button type="button" onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError(''); }} className="w-full text-sm font-bold" style={{ color: '#7c3aed' }}>
             {mode === 'login' ? "Don't have an account? Register" : 'Already have an account? Sign in'}
           </button>
           {mode === 'login' && <p className="mt-5 text-center text-xs text-slate-400">Demo: use prefilled credentials or create a new account.</p>}
@@ -811,6 +864,7 @@ function App() {
                     <div className="p-4 sm:p-6 lg:p-8">
                       <Routes>
                         <Route path="/" element={<DashboardPage profile={profile} setProfile={setProfile} />} />
+                        <Route path="/travel-planner" element={<TravelPlannerPage profile={profile} />} />
                         <Route path="/find-route" element={
                           <ProfileUpdateContext.Provider value={setProfile}>
                             <FindRoutePage profile={profile} setProfile={setProfile} setChatOpen={setChatOpen} />
@@ -853,9 +907,9 @@ function DashboardPage({ profile, setProfile }) {
   const [routes, setRoutes] = useState([]);
   const [selectedId, setSelectedId] = useState('');
   const [start, setStart] = useState('My Location');
-
   const [destination, setDestination] = useState('');
   const [loading, setLoading] = useState(false);
+  const [datasetPreview, setDatasetPreview] = useState(null);
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -871,6 +925,13 @@ function DashboardPage({ profile, setProfile }) {
     load();
     const interval = window.setInterval(load, 30000);
     return () => { active = false; window.clearInterval(interval); };
+  }, []);
+
+  useEffect(() => {
+    fetch(`${API}/api/dataset/preview?limit=12`)
+      .then(r => r.json())
+      .then(d => setDatasetPreview(d))
+      .catch(() => {});
   }, []);
 
   useEffect(() => {
@@ -1186,8 +1247,8 @@ function DashboardPage({ profile, setProfile }) {
 
         <Panel title="Data Transparency" icon={<Database size={17} />}>
           <div className="space-y-2">
-            <Detail label="Dataset records" value={metrics?.data_summary?.records ?? '—'} />
-            <Detail label="Data fields" value={metrics?.data_summary?.columns?.length ?? '—'} />
+            <Detail label="Dataset records" value={metrics?.data_summary?.records ?? datasetPreview?.total ?? '—'} />
+            <Detail label="Data fields" value={metrics?.data_summary?.columns?.length ?? datasetPreview?.columns?.length ?? '—'} />
             <Detail label="Completeness" value={metrics?.data_summary ? `${metrics.data_summary.confidence}%` : '—'} />
             <Detail label="Active reports" value={metrics?.active_report_count ?? '—'} />
             <Detail label="Routing mode" value={MAPBOX_TOKEN ? 'Mapbox Directions' : 'OSM + Valhalla'} />
@@ -1197,9 +1258,55 @@ function DashboardPage({ profile, setProfile }) {
           </div>
         </Panel>
       </section>
+
+      {/* Dataset Preview Table */}
+      {datasetPreview && datasetPreview.records?.length > 0 && (
+        <section>
+          <Panel title={`Dataset Preview — ${datasetPreview.total.toLocaleString()} records`} icon={<Database size={17} />}>
+            <p className="mb-3 text-xs" style={{ color: 'var(--text-muted)' }}>
+              Showing first {datasetPreview.records.length} rows of the accessibility routing dataset used for route scoring and analysis.
+            </p>
+            <div className="overflow-x-auto rounded-xl" style={{ border: '1px solid var(--line)' }}>
+              <table className="w-full min-w-[640px] text-xs border-collapse">
+                <thead>
+                  <tr style={{ background: 'var(--surface-muted)' }}>
+                    {datasetPreview.columns.map(col => (
+                      <th key={col} className="px-3 py-2.5 text-left font-bold uppercase tracking-wide whitespace-nowrap" style={{ color: 'var(--text-muted)', borderBottom: '1px solid var(--line)' }}>
+                        {col.replace(/_/g, ' ')}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {datasetPreview.records.map((row, i) => (
+                    <tr key={i} style={{ background: i % 2 === 0 ? 'var(--surface)' : 'var(--surface-muted)' }}>
+                      {datasetPreview.columns.map(col => {
+                        const val = row[col];
+                        const isScore = col === 'accessibility_score';
+                        const isBool = col === 'has_ramp' || col === 'tactile_paving';
+                        return (
+                          <td key={col} className="px-3 py-2 whitespace-nowrap font-mono" style={{ borderBottom: '1px solid var(--line)', color: isScore ? (val >= 80 ? '#10b981' : val >= 50 ? '#f59e0b' : '#ef4444') : 'var(--text-main)', fontWeight: isScore ? 700 : 400 }}>
+                            {isBool ? (val ? '✓' : '✗') : val !== null && val !== undefined ? String(val) : '—'}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-4 text-xs" style={{ color: 'var(--text-dim)' }}>
+              <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-emerald-500 inline-block" />Score ≥ 80 — High accessibility</span>
+              <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-amber-500 inline-block" />Score 50–79 — Moderate</span>
+              <span className="flex items-center gap-1.5"><span className="h-2.5 w-2.5 rounded-full bg-red-500 inline-block" />Score &lt; 50 — Low accessibility</span>
+            </div>
+          </Panel>
+        </section>
+      )}
     </div>
   );
 }
+
 
 // ─── Find Route Page ──────────────────────────────────────────────────────────
 function FindRoutePage({ profile, setProfile, setChatOpen }) {
@@ -1439,6 +1546,7 @@ function NearbyPlacesPage() {
   const [locating, setLocating] = useState(false);
   const [error, setError] = useState('');
   const [expandedPlace, setExpandedPlace] = useState('');
+  const [searchTrigger, setSearchTrigger] = useState(0);
 
   useEffect(() => {
     if (!center) { setPlaces([]); return; }
@@ -1449,16 +1557,16 @@ function NearbyPlacesPage() {
         const params = new URLSearchParams({ lat: center.latitude, lon: center.longitude, radius_m: radius, category });
         const r = await fetch(`${API}/api/places/nearby?${params}`, { signal: controller.signal });
         const d = await r.json();
-        if (!r.ok) throw new Error(d.detail || 'Nearby search failed.');
+        if (!r.ok) throw new Error(d.detail || 'Nearby search failed. The OpenStreetMap data service may be temporarily slow — try again in a moment.');
         setPlaces(d.places || []);
       } catch (err) {
-        if (!controller.signal.aborted) { setPlaces([]); setError(err.message || 'Search failed.'); }
+        if (!controller.signal.aborted) { setPlaces([]); setError(err.message || 'Search failed. Please try again.'); }
       }
       finally { if (!controller.signal.aborted) setLoading(false); }
     }
     searchNearby();
     return () => controller.abort();
-  }, [center]);
+  }, [center, searchTrigger]);
 
   async function useCurrentLocation() {
     setLocating(true); setError('');
@@ -1479,6 +1587,12 @@ function NearbyPlacesPage() {
   }
 
   function selectArea(s) { setAreaQuery(s.label); setCenter({ latitude: s.latitude, longitude: s.longitude }); setCenterLabel(s.label); setCenterSource('chosen'); }
+
+  function triggerSearch() {
+    if (center) setSearchTrigger(t => t + 1);
+    else setError('Please choose an area or use your current location first.');
+  }
+
 
   const categoryMatches = {
     health: ['hospital', 'clinic', 'doctors', 'pharmacy'],
@@ -1514,16 +1628,26 @@ function NearbyPlacesPage() {
   return (
     <div className="space-y-6">
       <Panel title="Find Nearby Accessible Places" icon={<MapPin size={17} />}>
-        <div className="grid gap-3 md:grid-cols-[1fr_auto_auto]">
-          <LocationSearchField value={areaQuery} onChange={v => { setAreaQuery(v); const m = v.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/); if (m) { setCenter({ latitude: Number(m[1]), longitude: Number(m[2]) }); setCenterLabel(v); setCenterSource('chosen'); } else { setCenter(null); setCenterLabel(''); } }} onSelect={selectArea} placeholder="Search an area or address…" />
-          <button type="button" className="secondary-button" onClick={() => setFiltersOpen(o => !o)} aria-expanded={filtersOpen}>
-            <Filter size={15} /> Filters {filtersOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
-          </button>
-          <button type="button" className="primary-button" onClick={useCurrentLocation} disabled={locating}>
-            <LocateFixed size={15} />{locating ? 'Locating…' : 'Use My Location'}
-          </button>
+        <div className="flex flex-col gap-2">
+          <div className="grid gap-2 md:grid-cols-[1fr_auto_auto_auto]">
+            <LocationSearchField value={areaQuery} onChange={v => { setAreaQuery(v); const m = v.match(/^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/); if (m) { setCenter({ latitude: Number(m[1]), longitude: Number(m[2]) }); setCenterLabel(v); setCenterSource('chosen'); } else if (!v.trim()) { setCenter(null); setCenterLabel(''); } }} onSelect={selectArea} placeholder="Type an area or address (e.g. T Nagar, Chennai)…" />
+            <button type="button" className="secondary-button whitespace-nowrap" onClick={() => setFiltersOpen(o => !o)} aria-expanded={filtersOpen}>
+              <Filter size={15} /> Filters {filtersOpen ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
+            </button>
+            <button type="button" className="secondary-button whitespace-nowrap" onClick={triggerSearch} disabled={loading || !center} title="Re-run search with current area and filters">
+              <RefreshCw size={14} className={loading ? 'animate-spin' : ''} />{loading ? 'Searching…' : 'Refresh'}
+            </button>
+            <button type="button" className="primary-button whitespace-nowrap" onClick={useCurrentLocation} disabled={locating}>
+              <LocateFixed size={15} />{locating ? 'Locating…' : 'My Location'}
+            </button>
+          </div>
+          {!centerLabel && (
+            <p className="text-xs px-1" style={{ color: 'var(--text-muted)' }}>
+              💡 Type an area name above and pick a suggestion <strong>or</strong> click <strong>My Location</strong> for GPS-based search.
+            </p>
+          )}
+          {centerLabel && <p className="text-xs" style={{ color: 'var(--text-muted)' }}>📍 Searching near: <strong>{centerLabel}</strong></p>}
         </div>
-        {centerLabel && <p className="mt-2 text-xs" style={{ color: 'var(--text-muted)' }}>📍 Searching near: <strong>{centerLabel}</strong></p>}
         {filtersOpen && (
           <div className="mt-4 grid gap-3 border-t pt-4 sm:grid-cols-3" style={{ borderColor: 'var(--line)' }}>
             <Field label="Place type">
@@ -1650,22 +1774,28 @@ function AccessibleBuildingsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedBuilding, setSelectedBuilding] = useState(null);
   const [mapCenter] = useState([13.06, 80.24]);
+  const [buildings, setBuildings] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  // Sample reference buildings
-  const sampleBuildings = [
-    { id: 'b1', name: 'City Central Library', type: 'Library', score: 92, address: 'Anna Salai, Chennai', lat: 13.0600, lon: 80.2400, features: ['Step-free entry', 'Elevator', 'Accessible restroom', 'Tactile flooring', 'Wheelchair parking', 'Hearing loop'], rating: 4.6, reviews: 128 },
-    { id: 'b2', name: 'Government General Hospital', type: 'Hospital', score: 88, address: 'Park Town, Chennai', lat: 13.0820, lon: 80.2785, features: ['Step-free entrance', 'Lift to all floors', 'Accessible parking', 'Sign language support'], rating: 4.2, reviews: 342 },
-    { id: 'b3', name: 'Community Hall', type: 'Public building', score: 81, address: 'T Nagar, Chennai', lat: 13.0418, lon: 80.2341, features: ['Ramp entrance', 'Wide doorways', 'Accessible seating area'], rating: 3.9, reviews: 56 },
-    { id: 'b4', name: 'Railway Station', type: 'Transport hub', score: 75, address: 'Chennai Central', lat: 13.0825, lon: 80.2754, features: ['Lifts on platforms', 'Tactile paths', 'Accessible toilets'], rating: 3.7, reviews: 891 },
-    { id: 'b5', name: 'Post Office', type: 'Government', score: 70, address: 'Mount Road, Chennai', lat: 13.0670, lon: 80.2540, features: ['Ramp access', 'Counter lowered section'], rating: 3.5, reviews: 34 },
-    { id: 'b6', name: 'Shopping Mall', type: 'Commercial', score: 95, address: 'Nungambakkam, Chennai', lat: 13.0570, lon: 80.2420, features: ['Full wheelchair access', 'Multiple lifts', 'Accessible parking', 'Braille signage', 'Quiet room'], rating: 4.8, reviews: 2341 },
-  ];
+  useEffect(() => {
+    fetch(`${API}/api/buildings`)
+      .then(res => res.json())
+      .then(data => {
+        setBuildings(data.buildings || []);
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error('Failed to load buildings', err);
+        setLoading(false);
+      });
+  }, []);
 
   const checklist = ['Step-free entry', 'Accessible toilets', 'Elevator / lift', 'Tactile guidance paths', 'Clear wayfinding signage', 'Rest areas', 'Wide doorways ≥90cm', 'Emergency egress access', 'Accessible parking', 'Hearing loop system'];
 
-  const filtered = sampleBuildings.filter(b =>
+  const filtered = buildings.filter(b =>
     !searchQuery || b.name.toLowerCase().includes(searchQuery.toLowerCase()) || b.type.toLowerCase().includes(searchQuery.toLowerCase())
   );
+
 
   return (
     <div className="space-y-6">
@@ -2340,9 +2470,9 @@ function ChatAssistant({ open, setOpen, profile }) {
         ))}
         {loading && (
           <div className="mr-4 flex items-center gap-2.5 rounded-2xl p-3.5 text-sm chat-bubble-bot">
-            <div className="loading-dot h-2 w-2 rounded-full bg-blue-500" />
-            <div className="loading-dot h-2 w-2 rounded-full bg-blue-500" />
-            <div className="loading-dot h-2 w-2 rounded-full bg-blue-500" />
+            <div className="loading-dot h-2 w-2 rounded-full" style={{ background: 'var(--accent)' }} />
+            <div className="loading-dot h-2 w-2 rounded-full" style={{ background: 'var(--accent)' }} />
+            <div className="loading-dot h-2 w-2 rounded-full" style={{ background: 'var(--accent)' }} />
             <span style={{ color: 'var(--text-muted)' }}>Analyzing your route context…</span>
           </div>
         )}
@@ -2379,4 +2509,309 @@ function ChatAssistant({ open, setOpen, profile }) {
   );
 }
 
+
+// ─── AI Accessible Travel Planner Page ──────────────────────────────────────────────
+
+function TravelPlannerPage({ profile }) {
+  const [formData, setFormData] = useState({ origin: '', destination: '', startDate: '', endDate: '', travelers: 1, preferences: { ...profile } });
+  const [loading, setLoading] = useState(false);
+  const [plan, setPlan] = useState(null);
+  const [error, setError] = useState(null);
+  const [activeTab, setActiveTab] = useState('Itinerary');
+
+  async function generatePlan(e) {
+    e.preventDefault();
+    setLoading(true); setError(null);
+    try {
+      const res = await fetch(`${API}/api/ai-travel-plan`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          origin: formData.origin, destination: formData.destination,
+          start_date: formData.startDate || new Date().toISOString().split('T')[0],
+          end_date: formData.endDate || new Date().toISOString().split('T')[0],
+          travelers: formData.travelers, accessibility_profile: "general", preferences: formData.preferences
+        })
+      });
+      const data = await res.json();
+      if (data.status === 'success') setPlan(data);
+      else setError(data.message || (data.detail ? JSON.stringify(data.detail) : "Unknown error"));
+    } catch (err) { setError("Failed to generate plan. Please try again."); }
+    finally { setLoading(false); }
+  }
+
+  return (
+    <div className="flex flex-col gap-6 max-w-[1400px] mx-auto w-full pb-20">
+      
+      {/* HERO BANNER */}
+      <div className="relative w-full h-[280px] rounded-2xl shadow-md flex-shrink-0" style={{ background: 'linear-gradient(to right, #001f3f, #003366)' }}>
+        <div className="absolute inset-0 bg-gradient-to-b from-black/20 via-transparent to-black/60 rounded-2xl pointer-events-none"></div>
+        
+        <div className="absolute top-8 left-8 text-white z-10 pointer-events-none">
+          <h1 className="text-4xl font-extrabold flex items-center gap-3 tracking-tight"><Sparkles className="text-blue-300" size={32}/> AI Travel Planner</h1>
+          <p className="mt-3 text-[15px] opacity-90 max-w-lg font-medium leading-relaxed">
+            Plan your accessible journey with personalized recommendations,<br/>real-time information and AI-powered insights.
+          </p>
+        </div>
+      </div>
+
+      {/* SEARCH BAR (Floating via negative margin) */}
+      <div className="relative z-20 -mt-12 mx-auto w-[95%] max-w-6xl bg-white rounded-xl shadow-xl p-3 flex flex-col xl:flex-row gap-3 border border-gray-200">
+        <div className="flex-1 w-full">
+          <LocationSearchField required placeholder="From (e.g. Chennai)" value={formData.origin} onChange={val => setFormData({...formData, origin: val})} />
+        </div>
+        <div className="flex-1 w-full">
+          <LocationSearchField required placeholder="Destination (e.g. Mahabalipuram)" value={formData.destination} onChange={val => setFormData({...formData, destination: val})} />
+        </div>
+        <div className="flex-[1.2] w-full flex flex-col sm:flex-row gap-2">
+          <div className="relative flex-1">
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400"><Clock size={16}/></div>
+            <input type="date" title="Start Date" required className="w-full pl-9 pr-2 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium text-gray-700 h-full text-xs" value={formData.startDate} onChange={e => setFormData({...formData, startDate: e.target.value})} />
+          </div>
+          <div className="relative flex-1">
+            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-gray-400"><Clock size={16}/></div>
+            <input type="date" title="End Date" required className="w-full pl-9 pr-2 py-3 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 font-medium text-gray-700 h-full text-xs" value={formData.endDate} onChange={e => setFormData({...formData, endDate: e.target.value})} />
+          </div>
+        </div>
+        <button onClick={generatePlan} disabled={loading} className="shrink-0 w-full xl:w-auto bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-8 rounded-lg shadow-md transition-all flex items-center justify-center gap-2 whitespace-nowrap text-sm">
+          {loading ? <LoadingDots text="Planning" /> : <><Sparkles size={16}/> Generate Plan</>}
+        </button>
+      </div>
+
+      {error && <div className="mt-8 p-4 bg-red-50 text-red-700 rounded-lg border border-red-200">{error}</div>}
+
+      {/* RESULTS AREA */}
+      {plan && (
+        <div className="mt-10 flex flex-col xl:flex-row gap-6 items-start">
+          
+          {/* MAIN CONTENT (LEFT) */}
+          <div className="flex-1 w-full bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
+            
+            {/* Header */}
+            <div className="p-6 border-b border-gray-100 flex flex-col md:flex-row md:justify-between md:items-center gap-4">
+              <div>
+                <h2 className="text-2xl font-bold flex items-center gap-3 text-gray-800">
+                  Your Personalized Travel Plan 
+                  <span className="bg-purple-100 text-purple-700 text-[10px] px-2.5 py-1 rounded-full uppercase font-bold tracking-wider flex items-center gap-1"><Sparkles size={10}/> AI Generated</span>
+                </h2>
+                <p className="text-sm text-gray-500 mt-1 font-medium">A 1-day accessible trip from {plan.trip_overview.origin} to {plan.trip_overview.destination}</p>
+              </div>
+              <button className="flex items-center gap-2 px-4 py-2 bg-gray-50 hover:bg-gray-100 text-gray-700 text-sm font-semibold rounded-lg border transition-colors shadow-sm whitespace-nowrap">
+                <FileText size={16}/> Print / Save
+              </button>
+            </div>
+
+            {/* Tabs */}
+            <div className="flex px-4 border-b border-gray-100 overflow-x-auto hide-scrollbar">
+              {['Itinerary', 'Hotels', 'Restaurants', 'Attractions', 'Route Map'].map(tab => (
+                <button 
+                  key={tab}
+                  onClick={() => setActiveTab(tab)}
+                  className={`px-5 py-4 font-semibold text-sm flex items-center gap-2 border-b-2 transition-colors whitespace-nowrap ${activeTab === tab ? 'border-blue-600 text-blue-600' : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'}`}
+                >
+                  {tab === 'Itinerary' && <Map size={16}/>}
+                  {tab === 'Hotels' && <Building size={16}/>}
+                  {tab === 'Restaurants' && <Utensils size={16}/>}
+                  {tab === 'Attractions' && <Camera size={16}/>}
+                  {tab === 'Route Map' && <MapPinned size={16}/>}
+                  {tab}
+                </button>
+              ))}
+            </div>
+
+            {/* Itinerary Timeline */}
+            {activeTab === 'Itinerary' && (
+              <div className="p-6 md:p-8">
+                <div className="relative border-l-2 border-gray-100 ml-4 md:ml-6 space-y-10 pb-4">
+                  {plan.itinerary[0]?.steps.map((step, idx) => (
+                    <div key={idx} className="relative pl-8 md:pl-12">
+                      
+                      {/* Timeline Dot & Time */}
+                      <div className="absolute -left-[17px] top-1 bg-white p-1 rounded-full border-2 border-blue-500 text-blue-500 shadow-sm">
+                        {step.icon === 'Car' && <div className="w-5 h-5 flex items-center justify-center"><Navigation2 size={12}/></div>}
+                        {step.icon === 'Building' && <div className="w-5 h-5 flex items-center justify-center"><Building2 size={12}/></div>}
+                        {step.icon === 'Camera' && <div className="w-5 h-5 flex items-center justify-center"><Camera size={12}/></div>}
+                        {step.icon === 'Utensils' && <div className="w-5 h-5 flex items-center justify-center"><Utensils size={12}/></div>}
+                      </div>
+                      <div className="absolute -left-[90px] md:-left-[100px] top-1.5 w-[70px] text-right text-xs font-bold text-gray-600">
+                        {step.time}
+                      </div>
+
+                      {/* Content Card */}
+                      <div className="bg-white rounded-xl border border-gray-100 shadow-sm overflow-hidden hover:shadow-md transition-shadow">
+                        <div className="p-4 md:p-5 flex flex-col md:flex-row gap-5">
+                          
+                          {/* Left Info & Image */}
+                          <div className="flex-1 flex flex-col md:flex-row gap-4">
+                            {step.image && (
+                              <div className="w-full md:w-36 h-36 md:h-28 rounded-lg overflow-hidden shrink-0">
+                                <img src={step.image} alt={step.title} className="w-full h-full object-cover" />
+                              </div>
+                            )}
+                            <div className="flex-1">
+                              <h3 className="font-bold text-lg text-gray-800 flex items-center gap-2 flex-wrap">
+                                {step.title}
+                                {step.type && <span className="bg-blue-50 text-blue-700 text-[10px] px-2 py-0.5 rounded-full uppercase tracking-wide border border-blue-100 flex items-center gap-1"><Star size={10}/> {step.type}</span>}
+                              </h3>
+                              {step.address && <p className="text-sm text-gray-500 mt-1 line-clamp-1">{step.address}</p>}
+                              {step.subtitle && <p className="text-xs text-blue-600 font-medium mt-1">{step.subtitle}</p>}
+                              
+                              {(step.rating || step.price) && (
+                                <div className="flex items-center gap-3 mt-3 text-sm">
+                                  {step.rating && <div className="flex items-center gap-1 text-orange-500 font-bold"><StarFill size={14}/> {step.rating} <span className="text-gray-400 font-normal text-xs">({step.reviews} reviews)</span></div>}
+                                  {step.price && <div className="font-medium text-gray-700">{step.price}</div>}
+                                </div>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Right Accessibility Features */}
+                          {step.accessibility && step.accessibility.length > 0 && (
+                            <div className="w-full md:w-[240px] shrink-0 border-t md:border-t-0 md:border-l border-gray-100 pt-4 md:pt-0 md:pl-5 flex flex-col justify-between">
+                              <div>
+                                <h4 className="text-xs font-bold text-gray-800 uppercase tracking-wider mb-2">Accessibility Features</h4>
+                                <ul className="space-y-1.5">
+                                  {step.accessibility.slice(0, 4).map((acc, i) => (
+                                    <li key={i} className="flex justify-between items-center text-xs">
+                                      <span className="flex items-center gap-1.5 text-gray-600">
+                                        <div className="w-4 flex justify-center text-green-600">
+                                          {acc.label.includes('Ramp') || acc.label.includes('Path') ? <Navigation size={12}/> :
+                                           acc.label.includes('Elevator') ? <ArrowRight size={12} className="-rotate-90"/> :
+                                           acc.label.includes('Parking') ? <ParkingCircle size={12}/> : <CheckCircle2 size={12}/>}
+                                        </div>
+                                        {acc.label}
+                                      </span>
+                                      {acc.status === 'Available' || acc.status === 'AVAILABLE' ? (
+                                        <span className="text-[9px] font-bold text-green-700 bg-green-50 px-1.5 py-0.5 rounded border border-green-200">Available</span>
+                                      ) : acc.status === 'Unknown' || acc.status === 'UNKNOWN' ? (
+                                        <span className="text-[9px] font-medium text-gray-500">Unknown</span>
+                                      ) : (
+                                        <span className="text-[9px] font-medium text-red-500">No</span>
+                                      )}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                              <div className="mt-3 text-[10px] text-gray-400 italic">Source: {step.source || 'OpenStreetMap'}</div>
+                            </div>
+                          )}
+
+                        </div>
+                      </div>
+
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {activeTab !== 'Itinerary' && (
+              <div className="p-8 text-center text-gray-500">
+                <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-gray-50 mb-4 text-gray-400">
+                  <MapPinned size={32}/>
+                </div>
+                <h3 className="text-lg font-medium text-gray-700">Detailed {activeTab} view</h3>
+                <p className="text-sm mt-1">This section is available in the full release.</p>
+              </div>
+            )}
+          </div>
+
+          {/* SIDEBAR (RIGHT) */}
+          <div className="w-full xl:w-[360px] flex flex-col gap-6 shrink-0">
+            
+            {/* MINI MAP */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden h-[300px] flex flex-col">
+              <div className="flex border-b border-gray-100">
+                <button className="flex-1 py-2 text-sm font-bold text-blue-600 border-b-2 border-blue-600">Map</button>
+                <button className="flex-1 py-2 text-sm font-medium text-gray-500">Route</button>
+              </div>
+              <div className="flex-1 relative bg-gray-100">
+                <MapContainer center={[plan.latitude || 12.62, plan.longitude || 80.19]} zoom={11} className="w-full h-full" zoomControl={false}>
+                  <AccessRouteMapTiles />
+                  {plan.latitude && <CircleMarker center={[plan.latitude, plan.longitude]} radius={8} pathOptions={{ color: '#fff', fillColor: '#ef4444', fillOpacity: 1 }}/>}
+                  {plan.hotels?.slice(0,1).map(h => h.lat && <CircleMarker key={h.id} center={[h.lat, h.lon]} radius={6} pathOptions={{ color: '#fff', fillColor: '#3b82f6', fillOpacity: 1 }}/>)}
+                </MapContainer>
+                {/* Mapbox Watermark mockup */}
+                <div className="absolute bottom-2 left-2 z-[400] text-[10px] font-bold text-gray-600 bg-white/70 px-1 rounded">mapbox</div>
+              </div>
+            </div>
+
+            {/* TRIP SUMMARY */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+              <h3 className="font-bold text-gray-800 text-lg mb-4">Trip Summary</h3>
+              <div className="space-y-3">
+                <div className="flex justify-between items-center text-sm border-b border-gray-50 pb-3">
+                  <span className="flex items-center gap-2 text-gray-600"><Navigation size={14} className="text-blue-500"/> Total Distance</span>
+                  <span className="font-bold text-gray-800">58 km</span>
+                </div>
+                <div className="flex justify-between items-center text-sm border-b border-gray-50 pb-3">
+                  <span className="flex items-center gap-2 text-gray-600"><Clock size={14} className="text-blue-500"/> Estimated Travel Time</span>
+                  <span className="font-bold text-gray-800">1 hr 15 min</span>
+                </div>
+                <div className="flex justify-between items-center text-sm border-b border-gray-50 pb-3">
+                  <span className="flex items-center gap-2 text-gray-600"><Sun size={14} className="text-blue-500"/> Best Time to Visit</span>
+                  <span className="font-bold text-gray-800">Nov – Feb</span>
+                </div>
+                <div className="flex justify-between items-center text-sm pt-1">
+                  <span className="flex items-center gap-2 text-gray-600"><Activity size={14} className="text-blue-500"/> Accessibility Score</span>
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-6 rounded-full border-2 border-blue-600 border-r-gray-200 flex items-center justify-center text-[8px] font-bold text-blue-600">85</div>
+                    <span className="font-bold text-gray-800">8.5 <span className="text-gray-400 font-normal text-xs">/10</span></span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* RECOMMENDED HOTELS */}
+            {plan.trip_overview?.recommended_hotel && (
+              <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="font-bold text-gray-800 text-lg">Recommended Hotels</h3>
+                  <button className="text-xs font-bold text-blue-600 hover:underline">View all</button>
+                </div>
+                <div className="flex gap-3">
+                  <div className="w-20 h-20 rounded-lg overflow-hidden shrink-0">
+                    <img src="https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=200&q=80" className="w-full h-full object-cover" />
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="font-bold text-sm text-gray-800 flex items-center gap-1 flex-wrap">
+                      {plan.trip_overview.recommended_hotel.name}
+                      <span className="bg-blue-50 text-blue-700 text-[8px] px-1.5 py-0.5 rounded border border-blue-100 ml-1">Hotel</span>
+                    </h4>
+                    <div className="flex items-center gap-1 text-orange-500 font-bold text-xs mt-1">
+                      <StarFill size={10}/> 4.3 <span className="text-gray-400 font-normal">(252)</span>
+                    </div>
+                    <div className="text-xs text-gray-500 mt-0.5">1.2 km from beach</div>
+                    <div className="text-xs font-bold text-gray-800 mt-1">₹4,500/night</div>
+                    <div className="mt-2 inline-flex items-center gap-1 bg-green-50 text-green-700 text-[9px] px-2 py-0.5 rounded-full border border-green-200 font-bold">
+                      <CheckCircle2 size={10}/> Highly Accessible
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* TRAVEL TIPS */}
+            <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5">
+              <h3 className="font-bold text-gray-800 text-lg flex items-center gap-2 mb-3"><CircleHelp className="text-blue-500" size={18}/> Travel Tips</h3>
+              <ul className="space-y-2.5">
+                <li className="flex gap-2 text-sm text-gray-600"><CheckCircle2 size={16} className="text-green-500 shrink-0 mt-0.5"/> Best time to visit is Nov – Feb (for pleasant weather).</li>
+                <li className="flex gap-2 text-sm text-gray-600"><CheckCircle2 size={16} className="text-green-500 shrink-0 mt-0.5"/> The ECR road is wheelchair friendly with smooth surfaces.</li>
+                <li className="flex gap-2 text-sm text-gray-600"><CheckCircle2 size={16} className="text-green-500 shrink-0 mt-0.5"/> Carry sunscreen, water and comfortable footwear.</li>
+                <li className="flex gap-2 text-sm text-gray-600"><CheckCircle2 size={16} className="text-green-500 shrink-0 mt-0.5"/> Book accessible rooms in advance.</li>
+              </ul>
+            </div>
+
+            {/* DISCLAIMER */}
+            <div className="bg-blue-50 rounded-xl border border-blue-100 p-4 flex gap-3 text-xs text-blue-800">
+              <Info size={16} className="shrink-0 mt-0.5 text-blue-600"/>
+              <p>This plan is based on real location data and accessibility information. Some details may be limited. Always confirm with the venue.</p>
+            </div>
+
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default App;
+
