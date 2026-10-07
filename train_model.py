@@ -1,80 +1,89 @@
 import pandas as pd
 import numpy as np
-import matplotlib.pyplot as plt
-import seaborn as sns
+import joblib
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report
-import joblib
-import os
+from sklearn.pipeline import Pipeline
+from sklearn.compose import ColumnTransformer
+from sklearn.preprocessing import OrdinalEncoder
+from sklearn.impute import SimpleImputer
 
 def main():
-    print("1. Loading the 419 real OSM data points...")
-    df = pd.read_csv("real_osm_accessibility_data.csv")
-    
-    print("\n2. Cleaning and Preprocessing...")
-    # Map raw features to the requested features
-    # Input features required: incline percentage, kerb height, surface type, ramp availability, tactile paving
-    
-    # 2.1 Handle Target Column (Safe/Unsafe)
-    # The current 'is_safe' in the CSV is all 0 because the previous rule required surface_score >= 2, but all OSM data in Chennai lacked surface tags (unknown).
-    # We will redefine 'is_safe' strictly based on the OSM 'wheelchair' tag which is the ground truth.
-    # Safe = 1 (if wheelchair='yes' or 'designated'), Unsafe = 0 (if 'no', 'limited', or 'unknown')
+    print("==================================================")
+    print("PHASE 2 - MACHINE LEARNING MODEL PIPELINE")
+    print("==================================================")
+    print("\n1. Loading the real OSM dataset (real_osm_accessibility_data.csv)...")
+    try:
+        df = pd.read_csv("real_osm_accessibility_data.csv")
+    except FileNotFoundError:
+        print("Error: 'real_osm_accessibility_data.csv' not found.")
+        return
+
+    # 2. TARGET VALIDATION & GENERATION
+    print("\n2. Target Validation & Generation...")
     df['Safe'] = df['original_wheelchair'].apply(lambda x: 1 if x in ['yes', 'designated'] else 0)
-    
-    print("Class distribution of derived Safe (1) / Unsafe (0):")
-    print(df['Safe'].value_counts())
-    
-    # 2.2 Encode Categorical Features
-    # Surface type is 'unknown' for all, but we'll encode it using pandas get_dummies or a mapping for consistency.
-    surface_mapping = {'unknown': 1, 'dirt': 0, 'paved': 2, 'asphalt': 3}
-    df['surface_type_encoded'] = df['original_surface'].map(surface_mapping).fillna(1)
-    
-    # Ramp availability (from original_wheelchair)
     df['ramp_available'] = df['original_wheelchair'].apply(lambda x: 1 if x in ['yes', 'designated'] else 0)
     
-    # Features X and Target y
-    X = df[['incline_percentage', 'kerb_height_cm', 'surface_type_encoded', 'ramp_available', 'tactile_paving_encoded']]
+    # 3. FEATURES AND TARGET
+    X = df[['incline_percentage', 'kerb_height_cm', 'original_surface', 'ramp_available', 'tactile_paving_encoded']]
     y = df['Safe']
     
-    # 3. Train/Test Split
+    # Fill NaN strings for OrdinalEncoder
+    X = X.copy()
+    X['original_surface'] = X['original_surface'].fillna('unknown').astype(str).str.lower()
+    
+    # 4. TRAIN / TEST SPLIT
     print("\n3. Splitting dataset (80/20, stratify=y)...")
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.20, random_state=42, stratify=y)
     
-    # 4. Train RandomForestClassifier
-    print("\n4. Training RandomForestClassifier...")
-    model = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42)
-    model.fit(X_train, y_train)
+    # 5. PREPROCESSING PIPELINE
+    num_features = ['incline_percentage', 'kerb_height_cm', 'ramp_available', 'tactile_paving_encoded']
+    num_transformer = Pipeline(steps=[
+        ('imputer', SimpleImputer(strategy='median'))
+    ])
     
-    # 5. Evaluate
-    print("\n5. Evaluation Results:")
-    y_pred = model.predict(X_test)
+    cat_features = ['original_surface']
     
-    acc = accuracy_score(y_test, y_pred)
-    prec = precision_score(y_test, y_pred)
-    rec = recall_score(y_test, y_pred)
-    f1 = f1_score(y_test, y_pred)
+    # Ordinal encoding: mapping categories to specific numbers. Unknown category handles unexpected values.
+    # We define the order so it matches our previous logic: dirt=0, unknown=1, paved=2, asphalt=3
+    # Any new value gets encoded as -1 (which we can then handle, but here we just map it)
+    surface_cats = [['dirt', 'unknown', 'paved', 'asphalt']]
+    cat_transformer = Pipeline(steps=[
+        ('encoder', OrdinalEncoder(categories=surface_cats, handle_unknown='use_encoded_value', unknown_value=-1))
+    ])
     
-    print(f"Accuracy:  {acc:.4f}")
-    print(f"Precision: {prec:.4f}")
-    print(f"Recall:    {rec:.4f}")
-    print(f"F1-score:  {f1:.4f}")
+    preprocessor = ColumnTransformer(
+        transformers=[
+            ('num', num_transformer, num_features),
+            ('cat', cat_transformer, cat_features)
+        ])
     
-    print("\nConfusion Matrix:")
-    print(confusion_matrix(y_test, y_pred))
+    clf = Pipeline(steps=[
+        ('preprocessor', preprocessor),
+        ('classifier', RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42))
+    ])
+    
+    # 6. TRAINING
+    print("\n5. Training RandomForestClassifier...")
+    clf.fit(X_train, y_train)
+    
+    # 7. EVALUATION
+    y_pred = clf.predict(X_test)
+    
+    print("\n6. Model Evaluation (Actual Metrics from test set):")
+    print(f"Accuracy:  {accuracy_score(y_test, y_pred):.4f}")
+    print(f"Precision: {precision_score(y_test, y_pred, zero_division=0):.4f}")
+    print(f"Recall:    {recall_score(y_test, y_pred, zero_division=0):.4f}")
+    print(f"F1-score:  {f1_score(y_test, y_pred, zero_division=0):.4f}")
+    
     print("\nClassification Report:")
-    print(classification_report(y_test, y_pred))
+    print(classification_report(y_test, y_pred, zero_division=0))
     
-    # 6. Feature Importance
-    print("\n6. Feature Importance:")
-    importances = model.feature_importances_
-    for feature, imp in zip(X.columns, importances):
-        print(f" - {feature}: {imp:.4f}")
-        
-    # 7. Save Pipeline
-    print("\n7. Saving model pipeline...")
-    joblib.dump(model, "accessibility_model.pkl")
-    print("Saved to accessibility_model.pkl")
+    # 8. SERIALIZATION
+    print("\n8. Saving complete pipeline (preprocessing + model)...")
+    joblib.dump(clf, "accessibility_model.pkl")
+    print("Successfully saved to accessibility_model.pkl")
 
 if __name__ == "__main__":
     main()

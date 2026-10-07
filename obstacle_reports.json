@@ -1,0 +1,29 @@
+[
+  {
+    "id": 1,
+    "latitude": 13.06,
+    "longitude": 80.24,
+    "obstacle_type": "Broken elevator",
+    "description": "",
+    "severity": "medium",
+    "status": "pending_verification"
+  },
+  {
+    "id": 2,
+    "latitude": 13.06,
+    "longitude": 80.24,
+    "obstacle_type": "Uneven surface",
+    "description": "",
+    "severity": "medium",
+    "status": "pending_verification"
+  },
+  {
+    "id": 3,
+    "latitude": 12.06,
+    "longitude": 80.24,
+    "obstacle_type": "Missing ramp",
+    "description": "it is soo risky to make a move ",
+    "severity": "high",
+    "status": "pending_verification"
+  }
+]
