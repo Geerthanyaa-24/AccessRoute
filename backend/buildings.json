@@ -1,0 +1,103 @@
+[
+  {
+    "id": "b1",
+    "name": "City Central Library",
+    "type": "Library",
+    "score": 92,
+    "address": "Anna Salai, Chennai",
+    "lat": 13.06,
+    "lon": 80.24,
+    "features": [
+      "Step-free entry",
+      "Elevator",
+      "Accessible restroom",
+      "Tactile flooring",
+      "Wheelchair parking",
+      "Hearing loop"
+    ],
+    "rating": 4.6,
+    "reviews": 128
+  },
+  {
+    "id": "b2",
+    "name": "Government General Hospital",
+    "type": "Hospital",
+    "score": 88,
+    "address": "Park Town, Chennai",
+    "lat": 13.082,
+    "lon": 80.2785,
+    "features": [
+      "Step-free entrance",
+      "Lift to all floors",
+      "Accessible parking",
+      "Sign language support"
+    ],
+    "rating": 4.2,
+    "reviews": 342
+  },
+  {
+    "id": "b3",
+    "name": "Community Hall",
+    "type": "Public building",
+    "score": 81,
+    "address": "T Nagar, Chennai",
+    "lat": 13.0418,
+    "lon": 80.2341,
+    "features": [
+      "Ramp entrance",
+      "Wide doorways",
+      "Accessible seating area"
+    ],
+    "rating": 3.9,
+    "reviews": 56
+  },
+  {
+    "id": "b4",
+    "name": "Railway Station",
+    "type": "Transport hub",
+    "score": 75,
+    "address": "Chennai Central",
+    "lat": 13.0825,
+    "lon": 80.2754,
+    "features": [
+      "Lifts on platforms",
+      "Tactile paths",
+      "Accessible toilets"
+    ],
+    "rating": 3.7,
+    "reviews": 891
+  },
+  {
+    "id": "b5",
+    "name": "Post Office",
+    "type": "Government",
+    "score": 70,
+    "address": "Mount Road, Chennai",
+    "lat": 13.067,
+    "lon": 80.254,
+    "features": [
+      "Ramp access",
+      "Counter lowered section"
+    ],
+    "rating": 3.5,
+    "reviews": 34
+  },
+  {
+    "id": "b6",
+    "name": "Shopping Mall",
+    "type": "Commercial",
+    "score": 95,
+    "address": "Nungambakkam, Chennai",
+    "lat": 13.057,
+    "lon": 80.242,
+    "features": [
+      "Full wheelchair access",
+      "Multiple lifts",
+      "Accessible parking",
+      "Braille signage",
+      "Quiet room"
+    ],
+    "rating": 4.8,
+    "reviews": 2341
+  }
+]
