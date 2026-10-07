@@ -14,5 +14,13 @@
     "role": "user",
     "password_hash": "0e768ecd65c9adc8809269103cc05541afd9e2d2c507a2ebc65c2555aaa257a2",
     "salt": "ceb218c0212659e4ee2d3beb20496c8e"
+  },
+  {
+    "id": "f20f8fd6cec3740e",
+    "name": "Admin",
+    "email": "admin@example.com",
+    "role": "user",
+    "password_hash": "d42d2e9fe80b15a81f5c7fea983b6acc03d62138240b367088ffff2b047f810c",
+    "salt": "c64d04b9b5e6e78687ac77543076d292"
   }
 ]

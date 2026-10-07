@@ -7,7 +7,14 @@ from fastapi import HTTPException
 
 MAPBOX_TOKEN = os.getenv("MAPBOX_ACCESS_TOKEN", "").strip()
 
-def geocode(location: str) -> Tuple[float, float, str]:`n    try:`n        if "," in location:`n            parts = location.split(",")`n            if len(parts) == 2:`n                return float(parts[0]), float(parts[1]), f"Location ({float(parts[0]):.4f}, {float(parts[1]):.4f})"`n    except: pass
+def geocode(location: str) -> Tuple[float, float, str]:
+    try:
+        if "," in location:
+            parts = location.split(",")
+            if len(parts) == 2:
+                return float(parts[0]), float(parts[1]), f"Location ({float(parts[0]):.4f}, {float(parts[1]):.4f})"
+    except:
+        pass
     data_mode = os.getenv("DATA_MODE", "demo").strip().lower()
     if not MAPBOX_TOKEN or data_mode == "demo":
         # Return demo coordinates

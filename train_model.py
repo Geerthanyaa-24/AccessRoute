@@ -4,80 +4,77 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, classification_report
 import joblib
 import os
 
-# Define output directories
-artifact_dir = r"C:\Users\deebi\.gemini\antigravity\brain\07162d55-931e-4ee9-b7b1-72f37aa1245b"
-report_dir = os.path.join(artifact_dir, "model_reports")
-os.makedirs(report_dir, exist_ok=True)
-
 def main():
-    print("Loading prepared dataset...")
-    try:
-        df = pd.read_csv("ready_for_training.csv")
-    except FileNotFoundError:
-        print("Error: 'ready_for_training.csv' not found. Please run the data pipeline first.")
-        return
-
-    print(f"Dataset loaded. Total records: {len(df)}")
-
-    # 1. Define Features (X) and Target (y)
-    # The target is 'is_safe'. We drop 'accessibility_score' because it directly determines 'is_safe'.
-    X = df[['incline_percentage', 'kerb_height_cm', 'surface_type_encoded', 'has_ramp_encoded', 'tactile_paving_encoded']]
-    y = df['is_safe']
-
-    # 2. Train/Test Split
-    print("Splitting data into 80% training and 20% testing sets...")
+    print("1. Loading the 419 real OSM data points...")
+    df = pd.read_csv("real_osm_accessibility_data.csv")
+    
+    print("\n2. Cleaning and Preprocessing...")
+    # Map raw features to the requested features
+    # Input features required: incline percentage, kerb height, surface type, ramp availability, tactile paving
+    
+    # 2.1 Handle Target Column (Safe/Unsafe)
+    # The current 'is_safe' in the CSV is all 0 because the previous rule required surface_score >= 2, but all OSM data in Chennai lacked surface tags (unknown).
+    # We will redefine 'is_safe' strictly based on the OSM 'wheelchair' tag which is the ground truth.
+    # Safe = 1 (if wheelchair='yes' or 'designated'), Unsafe = 0 (if 'no', 'limited', or 'unknown')
+    df['Safe'] = df['original_wheelchair'].apply(lambda x: 1 if x in ['yes', 'designated'] else 0)
+    
+    print("Class distribution of derived Safe (1) / Unsafe (0):")
+    print(df['Safe'].value_counts())
+    
+    # 2.2 Encode Categorical Features
+    # Surface type is 'unknown' for all, but we'll encode it using pandas get_dummies or a mapping for consistency.
+    surface_mapping = {'unknown': 1, 'dirt': 0, 'paved': 2, 'asphalt': 3}
+    df['surface_type_encoded'] = df['original_surface'].map(surface_mapping).fillna(1)
+    
+    # Ramp availability (from original_wheelchair)
+    df['ramp_available'] = df['original_wheelchair'].apply(lambda x: 1 if x in ['yes', 'designated'] else 0)
+    
+    # Features X and Target y
+    X = df[['incline_percentage', 'kerb_height_cm', 'surface_type_encoded', 'ramp_available', 'tactile_paving_encoded']]
+    y = df['Safe']
+    
+    # 3. Train/Test Split
+    print("\n3. Splitting dataset (80/20, stratify=y)...")
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42, stratify=y)
-
-    # 3. Model Training
-    print("Training Random Forest Classifier...")
+    
+    # 4. Train RandomForestClassifier
+    print("\n4. Training RandomForestClassifier...")
     model = RandomForestClassifier(n_estimators=100, max_depth=10, random_state=42)
     model.fit(X_train, y_train)
-
-    # 4. Model Evaluation
-    print("Evaluating model on test data...")
+    
+    # 5. Evaluate
+    print("\n5. Evaluation Results:")
     y_pred = model.predict(X_test)
     
     acc = accuracy_score(y_test, y_pred)
-    print(f"\n--- Model Accuracy: {acc * 100:.2f}% ---")
+    prec = precision_score(y_test, y_pred)
+    rec = recall_score(y_test, y_pred)
+    f1 = f1_score(y_test, y_pred)
     
+    print(f"Accuracy:  {acc:.4f}")
+    print(f"Precision: {prec:.4f}")
+    print(f"Recall:    {rec:.4f}")
+    print(f"F1-score:  {f1:.4f}")
+    
+    print("\nConfusion Matrix:")
+    print(confusion_matrix(y_test, y_pred))
     print("\nClassification Report:")
     print(classification_report(y_test, y_pred))
-
-    # 5. Visualizing the Confusion Matrix
-    cm = confusion_matrix(y_test, y_pred)
-    plt.figure(figsize=(6, 5))
-    sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", cbar=False, 
-                xticklabels=['Unsafe (0)', 'Safe (1)'], yticklabels=['Unsafe (0)', 'Safe (1)'])
-    plt.title('Confusion Matrix')
-    plt.ylabel('Actual')
-    plt.xlabel('Predicted')
-    plt.tight_layout()
-    plt.savefig(os.path.join(report_dir, "confusion_matrix.png"))
-    plt.close()
     
-    # 6. Visualizing Feature Importance
+    # 6. Feature Importance
+    print("\n6. Feature Importance:")
     importances = model.feature_importances_
-    features = X.columns
-    indices = np.argsort(importances)
-    
-    plt.figure(figsize=(8, 5))
-    plt.title('Feature Importances')
-    plt.barh(range(len(indices)), importances[indices], color='b', align='center')
-    plt.yticks(range(len(indices)), [features[i] for i in indices])
-    plt.xlabel('Relative Importance')
-    plt.tight_layout()
-    plt.savefig(os.path.join(report_dir, "feature_importance.png"))
-    plt.close()
-
-    # 7. Save the Model
-    print("Saving trained model to 'accessibility_model.pkl'...")
+    for feature, imp in zip(X.columns, importances):
+        print(f" - {feature}: {imp:.4f}")
+        
+    # 7. Save Pipeline
+    print("\n7. Saving model pipeline...")
     joblib.dump(model, "accessibility_model.pkl")
-    
-    print(f"\nTraining Complete! Model saved and evaluation reports generated in: {report_dir}")
+    print("Saved to accessibility_model.pkl")
 
 if __name__ == "__main__":
     main()
